@@ -55,16 +55,11 @@ async function getVersion(url) {
         const res = await axios.get(url, {
             timeout: 10000,
             headers: {
-                "User-Agent": "Mozilla/5.0 (VersionTrackerBot)"
+                "User-Agent": "Mozilla/5.0 (VersionBot)"
             }
         });
 
-        const data = String(res.data).trim();
-
-        if (!data) return null;
-
-        return data;
-
+        return String(res.data).trim();
     } catch (err) {
         console.error("Version fetch error:", url, err.message);
         return null;
@@ -74,8 +69,8 @@ async function getVersion(url) {
 // ---------------- VERSION COMPARISON ----------------
 
 function compareVersions(a, b) {
-    const pa = String(a).split(".").map(n => parseInt(n, 10) || 0);
-    const pb = String(b).split(".").map(n => parseInt(n, 10) || 0);
+    const pa = String(a).split(".").map(x => parseInt(x, 10) || 0);
+    const pb = String(b).split(".").map(x => parseInt(x, 10) || 0);
 
     const len = Math.max(pa.length, pb.length);
 
@@ -90,10 +85,9 @@ function compareVersions(a, b) {
     return 0;
 }
 
-// ---------------- STATUS ANALYZER ----------------
+// ---------------- STATUS ----------------
 
 function analyzeStatus(wip, live) {
-
     const diff = compareVersions(wip, live);
 
     if (diff <= 0) {
@@ -122,16 +116,15 @@ function analyzeStatus(wip, live) {
 // ---------------- VERSION CHECKER ----------------
 
 async function checkVersions() {
-
     console.log("[CHECK] Running version check...");
 
     const wipVersion = await getVersion(URLS.wip);
     const liveVersion = await getVersion(URLS.live);
 
-    console.log("[DEBUG] WIP:", wipVersion, "| LIVE:", liveVersion);
+    console.log("[API] WIP:", wipVersion, "LIVE:", liveVersion);
 
     if (!wipVersion || !liveVersion) {
-        console.log("[WARN] Missing version data, skipping cycle.");
+        console.log("[SKIP] Missing version data");
         return;
     }
 
@@ -143,7 +136,7 @@ async function checkVersions() {
 
     const statusChanged = lastStatus !== state.status;
 
-    console.log("[DEBUG] versionChanged:", versionChanged, "statusChanged:", statusChanged);
+    console.log("[STATE] versionChanged:", versionChanged, "statusChanged:", statusChanged);
 
     if (!versionChanged && !statusChanged) return;
 
@@ -151,17 +144,14 @@ async function checkVersions() {
     lastStatus = state.status;
 
     for (const guildId in servers) {
-
         try {
             const channelId = servers[guildId]?.channelId;
             if (!channelId) continue;
 
-            console.log(`[POST] Guild ${guildId} -> Channel ${channelId}`);
-
             const channel = await client.channels.fetch(channelId).catch(() => null);
 
-            if (!channel) {
-                console.log("[WARN] Channel not found:", channelId);
+            if (!channel || channel.type !== ChannelType.GuildText) {
+                console.log(`[WARN] Invalid channel for guild ${guildId}`);
                 continue;
             }
 
@@ -198,11 +188,9 @@ async function checkVersions() {
 // ---------------- COMMANDS ----------------
 
 client.on("messageCreate", async (message) => {
-
     if (message.author.bot) return;
 
     if (message.content.startsWith("!setup")) {
-
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply("You need Administrator permission.");
         }
@@ -227,7 +215,6 @@ client.on("messageCreate", async (message) => {
     }
 
     if (message.content === "!version") {
-
         const wipVersion = await getVersion(URLS.wip);
         const liveVersion = await getVersion(URLS.live);
 
@@ -237,20 +224,9 @@ client.on("messageCreate", async (message) => {
             .setColor("#111111")
             .setTitle("War Thunder Versions")
             .addFields(
-                {
-                    name: "🟩 WIP (Dev Build)",
-                    value: `\`${wipVersion}\``,
-                    inline: true
-                },
-                {
-                    name: "🟦 Live (Stable)",
-                    value: `\`${liveVersion}\``,
-                    inline: true
-                },
-                {
-                    name: `${state.emoji} Status`,
-                    value: state.message
-                }
+                { name: "🟩 WIP", value: `\`${wipVersion}\``, inline: true },
+                { name: "🟦 Live", value: `\`${liveVersion}\``, inline: true },
+                { name: `${state.emoji} Status`, value: state.message }
             )
             .setFooter({ text: `State: ${state.status}` })
             .setTimestamp();
@@ -264,9 +240,9 @@ client.on("messageCreate", async (message) => {
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
 
-    console.log("Scheduler started (5 min interval)");
-
+    console.log("Running initial version check...");
     checkVersions();
+
     setInterval(checkVersions, 5 * 60 * 1000);
 });
 

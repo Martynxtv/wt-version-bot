@@ -23,13 +23,13 @@ const client = new Client({
     ]
 });
 
-// ---------------- CONFIG (FIXED) ----------------
+// ---------------- CONFIG (MULTI-SERVER SAFE) ----------------
 
 const CONFIG_FILE = "./servers.json";
 
 let servers = {};
 
-// SAFE LOAD + AUTO CREATE FILE
+// load or create file safely
 function loadServers() {
     try {
         if (!fs.existsSync(CONFIG_FILE)) {
@@ -130,7 +130,7 @@ function analyzeStatus(wip, live) {
     };
 }
 
-// ---------------- CHECK LOOP ----------------
+// ---------------- VERSION CHECK LOOP ----------------
 
 async function checkVersions() {
     console.log("\n[CHECK] Running version check...");
@@ -160,40 +160,39 @@ async function checkVersions() {
     lastVersions = { wip: wipVersion, live: liveVersion };
     lastStatus = state.status;
 
-    for (const guildId in servers) {
+    const embed = new EmbedBuilder()
+        .setColor("#111111")
+        .setTitle("War Thunder Version Tracker")
+        .addFields(
+            { name: "🟩 WIP", value: `\`${wipVersion}\``, inline: true },
+            { name: "🟦 Live", value: `\`${liveVersion}\``, inline: true },
+            { name: `${state.emoji} Status`, value: state.message }
+        )
+        .setFooter({ text: `State: ${state.status}` })
+        .setTimestamp();
+
+    // MULTI-SERVER LOOP
+    for (const guildId of Object.keys(servers)) {
         const channelId = servers[guildId]?.channelId;
+
         if (!channelId) continue;
 
-        console.log(`[SEND] Guild ${guildId} → Channel ${channelId}`);
+        console.log(`[SEND] Guild ${guildId} → ${channelId}`);
 
         try {
-            const channel = await client.channels.fetch(channelId).catch(err => {
-                console.error("[CHANNEL FETCH ERROR]", err.message);
-                return null;
-            });
+            const channel = await client.channels.fetch(channelId).catch(() => null);
 
             if (!channel || !channel.isTextBased()) {
-                console.log("[WARN] Invalid channel:", channelId);
+                console.log(`[WARN] Invalid channel: ${channelId}`);
                 continue;
             }
 
-            const embed = new EmbedBuilder()
-                .setColor("#111111")
-                .setTitle("War Thunder Version Tracker")
-                .addFields(
-                    { name: "🟩 WIP", value: `\`${wipVersion}\``, inline: true },
-                    { name: "🟦 Live", value: `\`${liveVersion}\``, inline: true },
-                    { name: `${state.emoji} Status`, value: state.message }
-                )
-                .setFooter({ text: `State: ${state.status}` })
-                .setTimestamp();
-
             await channel.send({ embeds: [embed] });
 
-            console.log("[SUCCESS] Posted update");
+            console.log(`[SUCCESS] Posted to guild ${guildId}`);
 
         } catch (err) {
-            console.error("[SEND ERROR]", err.message);
+            console.error(`[SEND ERROR] Guild ${guildId}:`, err.message);
         }
     }
 }
@@ -203,7 +202,7 @@ async function checkVersions() {
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
-    // SETUP COMMAND
+    // SETUP MULTI-SERVER
     if (message.content.startsWith("!setup")) {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply("You need Administrator permission.");
@@ -215,20 +214,24 @@ client.on("messageCreate", async (message) => {
             return message.reply("Usage: !setup #channel");
         }
 
-        if (channel.type !== ChannelType.GuildText) {
+        if (!channel.isTextBased()) {
             return message.reply("Please select a text channel.");
         }
 
-        servers[message.guild.id] = {
+        const guildId = message.guild.id;
+
+        servers[guildId] = {
             channelId: channel.id
         };
 
         saveServers();
 
-        return message.reply(`Setup complete → ${channel}`);
+        console.log(`[SETUP] Guild ${guildId} → Channel ${channel.id}`);
+
+        return message.reply(`Setup complete. Updates will go to ${channel}`);
     }
 
-    // VERSION COMMAND
+    // MANUAL CHECK
     if (message.content === "!version") {
         const wipVersion = await getVersion(URLS.wip);
         const liveVersion = await getVersion(URLS.live);
@@ -250,7 +253,7 @@ client.on("messageCreate", async (message) => {
     }
 });
 
-// ---------------- V15 READY ----------------
+// ---------------- v15 READY ----------------
 
 client.once("clientReady", (c) => {
     console.log(`Logged in as ${c.user.tag}`);

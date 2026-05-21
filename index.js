@@ -55,21 +55,30 @@ async function getVersion(url) {
     }
 }
 
-// ---------------- STATUS ----------------
+// ---------------- VERSION COMPARISON (FIXED) ----------------
 
-function analyzeStatus(wip, live) {
-    const w = parseInt(wip);
-    const l = parseInt(live);
+function compareVersions(a, b) {
+    const pa = String(a).split(".").map(n => parseInt(n, 10));
+    const pb = String(b).split(".").map(n => parseInt(n, 10));
 
-    if (isNaN(w) || isNaN(l)) {
-        return {
-            status: "UNKNOWN",
-            emoji: "⚪",
-            message: "Unable to determine update state."
-        };
+    const len = Math.max(pa.length, pb.length);
+
+    for (let i = 0; i < len; i++) {
+        const na = pa[i] || 0;
+        const nb = pb[i] || 0;
+
+        if (na > nb) return 1;
+        if (na < nb) return -1;
     }
 
-    const diff = w - l;
+    return 0;
+}
+
+// ---------------- STATUS ANALYZER ----------------
+
+function analyzeStatus(wip, live) {
+
+    const diff = compareVersions(wip, live);
 
     if (diff <= 0) {
         return {
@@ -94,7 +103,7 @@ function analyzeStatus(wip, live) {
     };
 }
 
-// ---------------- CHECKER ----------------
+// ---------------- VERSION CHECKER ----------------
 
 async function checkVersions() {
 
@@ -117,6 +126,7 @@ async function checkVersions() {
     lastStatus = state.status;
 
     for (const guildId in servers) {
+
         try {
 
             const channelId = servers[guildId].channelId;
@@ -143,7 +153,9 @@ async function checkVersions() {
                         value: state.message
                     }
                 )
-                .setFooter({ text: `State: ${state.status}` })
+                .setFooter({
+                    text: `State: ${state.status}`
+                })
                 .setTimestamp();
 
             await channel.send({ embeds: [embed] });
@@ -157,6 +169,7 @@ async function checkVersions() {
 // ---------------- COMMANDS ----------------
 
 client.on("messageCreate", async (message) => {
+
     if (message.author.bot) return;
 
     if (message.content.startsWith("!setup")) {
@@ -167,7 +180,9 @@ client.on("messageCreate", async (message) => {
 
         const channel = message.mentions.channels.first();
 
-        if (!channel) return message.reply("Usage: !setup #channel");
+        if (!channel) {
+            return message.reply("Usage: !setup #channel");
+        }
 
         if (channel.type !== ChannelType.GuildText) {
             return message.reply("Please select a text channel.");
@@ -208,14 +223,16 @@ client.on("messageCreate", async (message) => {
                     value: state.message
                 }
             )
-            .setFooter({ text: `State: ${state.status}` })
+            .setFooter({
+                text: `State: ${state.status}`
+            })
             .setTimestamp();
 
         return message.reply({ embeds: [embed] });
     }
 });
 
-// ---------------- READY (FIXED) ----------------
+// ---------------- READY EVENT ----------------
 
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);

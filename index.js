@@ -7,8 +7,7 @@ const {
     Client,
     GatewayIntentBits,
     EmbedBuilder,
-    PermissionsBitField,
-    ChannelType
+    PermissionsBitField
 } = require("discord.js");
 
 console.log("Starting bot...");
@@ -77,6 +76,7 @@ async function getVersion(url) {
         });
 
         return String(res.data).trim();
+
     } catch (err) {
         console.error("[API ERROR]", url, err.message);
         return null;
@@ -85,31 +85,34 @@ async function getVersion(url) {
 
 // ---------------- VERSION LOGIC ----------------
 
-// REAL numeric version difference (important fix)
-function versionDiff(a, b) {
-    const pa = String(a).split(".").map(x => parseInt(x, 10) || 0);
-    const pb = String(b).split(".").map(x => parseInt(x, 10) || 0);
+function versionParts(v) {
+    return String(v)
+        .split(".")
+        .map(n => parseInt(n, 10) || 0);
+}
+
+function versionCompare(a, b) {
+    const pa = versionParts(a);
+    const pb = versionParts(b);
 
     const len = Math.max(pa.length, pb.length);
-
-    let diff = 0;
 
     for (let i = 0; i < len; i++) {
         const na = pa[i] || 0;
         const nb = pb[i] || 0;
 
-        if (na !== nb) {
-            diff += (na - nb) * Math.pow(1000, len - i);
-        }
+        if (na > nb) return 1;
+        if (na < nb) return -1;
     }
 
-    return diff;
+    return 0;
 }
 
 function analyzeStatus(wip, live) {
-    const diff = versionDiff(wip, live);
+    const cmp = versionCompare(wip, live);
 
-    if (diff === 0) {
+    // identical versions
+    if (cmp === 0) {
         return {
             status: "LIVE_SYNCED",
             emoji: "🟢",
@@ -117,8 +120,26 @@ function analyzeStatus(wip, live) {
         };
     }
 
-    // WIP slightly ahead → normal update rollout
-    if (diff > 0 && diff < 2) {
+    // WIP ahead
+    if (cmp === 1) {
+        const wp = versionParts(wip);
+        const lp = versionParts(live);
+
+        // compare LAST version number only
+        const lastDiff =
+            (wp[wp.length - 1] || 0) -
+            (lp[lp.length - 1] || 0);
+
+        // 2 or more versions ahead
+        if (lastDiff >= 2) {
+            return {
+                status: "TEST_SERVER_LIKELY",
+                emoji: "🔴",
+                message: "Test server / major update cycle likely active."
+            };
+        }
+
+        // only 1 version ahead
         return {
             status: "UPDATE_STAGING",
             emoji: "🟡",
@@ -126,20 +147,11 @@ function analyzeStatus(wip, live) {
         };
     }
 
-    // BIG gap → test server / major cycle
-    if (diff >= 2) {
-        return {
-            status: "TEST_SERVER_LIKELY",
-            emoji: "🔴",
-            message: "Test server / major update cycle likely active."
-        };
-    }
-
     // LIVE ahead of WIP
     return {
         status: "ROLLBACK_OR_TEST",
         emoji: "🟠",
-        message: "Live is ahead of WIP (rollback or test server detected)."
+        message: "Live is ahead of WIP (rollback or mismatch detected)."
     };
 }
 
@@ -153,7 +165,10 @@ async function checkVersions() {
 
     console.log("[API] WIP:", wipVersion, "| LIVE:", liveVersion);
 
-    if (!wipVersion || !liveVersion) return;
+    if (!wipVersion || !liveVersion) {
+        console.log("[SKIP] Missing API data");
+        return;
+    }
 
     const state = analyzeStatus(wipVersion, liveVersion);
 
@@ -161,37 +176,79 @@ async function checkVersions() {
         lastVersions.wip !== wipVersion ||
         lastVersions.live !== liveVersion;
 
-    const statusChanged = lastStatus !== state.status;
+    const statusChanged =
+        lastStatus !== state.status;
+
+    console.log(
+        "[STATE]",
+        state.status,
+        "| versionChanged:",
+        versionChanged,
+        "| statusChanged:",
+        statusChanged
+    );
 
     if (!versionChanged && !statusChanged) return;
 
-    lastVersions = { wip: wipVersion, live: liveVersion };
+    lastVersions = {
+        wip: wipVersion,
+        live: liveVersion
+    };
+
     lastStatus = state.status;
 
     const embed = new EmbedBuilder()
         .setColor("#111111")
         .setTitle("War Thunder Version Tracker")
         .addFields(
-            { name: "🟩 WIP", value: `\`${wipVersion}\``, inline: true },
-            { name: "🟦 Live", value: `\`${liveVersion}\``, inline: true },
-            { name: `${state.emoji} Status`, value: state.message }
+            {
+                name: "🟩 WIP",
+                value: `\`${wipVersion}\``,
+                inline: true
+            },
+            {
+                name: "🟦 Live",
+                value: `\`${liveVersion}\``,
+                inline: true
+            },
+            {
+                name: `${state.emoji} Status`,
+                value: state.message
+            }
         )
-        .setFooter({ text: `State: ${state.status}` })
+        .setFooter({
+            text: `State: ${state.status}`
+        })
         .setTimestamp();
 
     for (const guildId of Object.keys(servers)) {
         const channelId = servers[guildId]?.channelId;
+
         if (!channelId) continue;
 
+        console.log(`[SEND] Guild ${guildId} → ${channelId}`);
+
         try {
-            const channel = await client.channels.fetch(channelId).catch(() => null);
+            const channel = await client.channels
+                .fetch(channelId)
+                .catch(() => null);
 
-            if (!channel || !channel.isTextBased()) continue;
+            if (!channel || !channel.isTextBased()) {
+                console.log(`[WARN] Invalid channel: ${channelId}`);
+                continue;
+            }
 
-            await channel.send({ embeds: [embed] });
+            await channel.send({
+                embeds: [embed]
+            });
+
+            console.log(`[SUCCESS] Posted to guild ${guildId}`);
 
         } catch (err) {
-            console.error(`[SEND ERROR] Guild ${guildId}:`, err.message);
+            console.error(
+                `[SEND ERROR] Guild ${guildId}:`,
+                err.message
+            );
         }
     }
 }
@@ -201,55 +258,113 @@ async function checkVersions() {
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
+    // SETUP
     if (message.content.startsWith("!setup")) {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            return message.reply("You need Administrator permission.");
+
+        if (
+            !message.member.permissions.has(
+                PermissionsBitField.Flags.Administrator
+            )
+        ) {
+            return message.reply(
+                "You need Administrator permission."
+            );
         }
 
-        const channel = message.mentions.channels.first();
+        const channel =
+            message.mentions.channels.first();
 
-        if (!channel || !channel.isTextBased()) {
-            return message.reply("Usage: !setup #channel");
+        if (!channel) {
+            return message.reply(
+                "Usage: !setup #channel"
+            );
         }
 
-        servers[message.guild.id] = { channelId: channel.id };
+        if (!channel.isTextBased()) {
+            return message.reply(
+                "Please select a text channel."
+            );
+        }
+
+        const guildId = message.guild.id;
+
+        servers[guildId] = {
+            channelId: channel.id
+        };
+
         saveServers();
 
-        return message.reply(`Setup complete. Updates will go to ${channel}`);
+        console.log(
+            `[SETUP] Guild ${guildId} → Channel ${channel.id}`
+        );
+
+        return message.reply(
+            `Setup complete. Updates will go to ${channel}`
+        );
     }
 
+    // MANUAL VERSION CHECK
     if (message.content === "!version") {
+
         const wipVersion = await getVersion(URLS.wip);
         const liveVersion = await getVersion(URLS.live);
 
-        const state = analyzeStatus(wipVersion, liveVersion);
+        const state = analyzeStatus(
+            wipVersion,
+            liveVersion
+        );
 
         const embed = new EmbedBuilder()
             .setColor("#111111")
             .setTitle("War Thunder Versions")
             .addFields(
-                { name: "🟩 WIP", value: `\`${wipVersion}\``, inline: true },
-                { name: "🟦 Live", value: `\`${liveVersion}\``, inline: true },
-                { name: `${state.emoji} Status`, value: state.message }
+                {
+                    name: "🟩 WIP",
+                    value: `\`${wipVersion}\``,
+                    inline: true
+                },
+                {
+                    name: "🟦 Live",
+                    value: `\`${liveVersion}\``,
+                    inline: true
+                },
+                {
+                    name: `${state.emoji} Status`,
+                    value: state.message
+                }
             )
-            .setFooter({ text: `State: ${state.status}` })
+            .setFooter({
+                text: `State: ${state.status}`
+            })
             .setTimestamp();
 
-        return message.reply({ embeds: [embed] });
+        return message.reply({
+            embeds: [embed]
+        });
     }
 });
 
 // ---------------- READY ----------------
 
 client.once("clientReady", (c) => {
+
     console.log(`Logged in as ${c.user.tag}`);
 
+    console.log("Running initial version check...");
+
     checkVersions();
-    setInterval(checkVersions, 5 * 60 * 1000);
+
+    // every 5 minutes
+    setInterval(
+        checkVersions,
+        5 * 60 * 1000
+    );
 });
 
 // ---------------- LOGIN ----------------
 
 client.login(process.env.TOKEN)
     .then(() => console.log("Login successful"))
-    .catch(err => console.error("Login failed:", err));
+    .catch(err =>
+        console.error("Login failed:", err)
+    );

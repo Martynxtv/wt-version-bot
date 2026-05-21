@@ -23,17 +23,15 @@ const client = new Client({
     ]
 });
 
-// ---------------- CONFIG (MULTI-SERVER SAFE) ----------------
+// ---------------- CONFIG ----------------
 
 const CONFIG_FILE = "./servers.json";
 
 let servers = {};
 
-// load or create file safely
 function loadServers() {
     try {
         if (!fs.existsSync(CONFIG_FILE)) {
-            console.log("[CONFIG] servers.json missing → creating new one");
             fs.writeFileSync(CONFIG_FILE, JSON.stringify({}, null, 4));
         }
 
@@ -87,27 +85,31 @@ async function getVersion(url) {
 
 // ---------------- VERSION LOGIC ----------------
 
-function compareVersions(a, b) {
+// REAL numeric version difference (important fix)
+function versionDiff(a, b) {
     const pa = String(a).split(".").map(x => parseInt(x, 10) || 0);
     const pb = String(b).split(".").map(x => parseInt(x, 10) || 0);
 
     const len = Math.max(pa.length, pb.length);
 
+    let diff = 0;
+
     for (let i = 0; i < len; i++) {
         const na = pa[i] || 0;
         const nb = pb[i] || 0;
 
-        if (na > nb) return 1;
-        if (na < nb) return -1;
+        if (na !== nb) {
+            diff += (na - nb) * Math.pow(1000, len - i);
+        }
     }
 
-    return 0;
+    return diff;
 }
 
 function analyzeStatus(wip, live) {
-    const diff = compareVersions(wip, live);
+    const diff = versionDiff(wip, live);
 
-    if (diff <= 0) {
+    if (diff === 0) {
         return {
             status: "LIVE_SYNCED",
             emoji: "🟢",
@@ -115,7 +117,8 @@ function analyzeStatus(wip, live) {
         };
     }
 
-    if (diff === 1) {
+    // WIP slightly ahead → normal update rollout
+    if (diff > 0 && diff < 2) {
         return {
             status: "UPDATE_STAGING",
             emoji: "🟡",
@@ -123,14 +126,24 @@ function analyzeStatus(wip, live) {
         };
     }
 
+    // BIG gap → test server / major cycle
+    if (diff >= 2) {
+        return {
+            status: "TEST_SERVER_LIKELY",
+            emoji: "🔴",
+            message: "Test server / major update cycle likely active."
+        };
+    }
+
+    // LIVE ahead of WIP
     return {
-        status: "TEST_SERVER_LIKELY",
-        emoji: "🔴",
-        message: "Test server / major update cycle likely active."
+        status: "ROLLBACK_OR_TEST",
+        emoji: "🟠",
+        message: "Live is ahead of WIP (rollback or test server detected)."
     };
 }
 
-// ---------------- VERSION CHECK LOOP ----------------
+// ---------------- CHECK LOOP ----------------
 
 async function checkVersions() {
     console.log("\n[CHECK] Running version check...");
@@ -140,10 +153,7 @@ async function checkVersions() {
 
     console.log("[API] WIP:", wipVersion, "| LIVE:", liveVersion);
 
-    if (!wipVersion || !liveVersion) {
-        console.log("[SKIP] Missing API data");
-        return;
-    }
+    if (!wipVersion || !liveVersion) return;
 
     const state = analyzeStatus(wipVersion, liveVersion);
 
@@ -152,8 +162,6 @@ async function checkVersions() {
         lastVersions.live !== liveVersion;
 
     const statusChanged = lastStatus !== state.status;
-
-    console.log("[STATE] versionChanged:", versionChanged, "statusChanged:", statusChanged);
 
     if (!versionChanged && !statusChanged) return;
 
@@ -171,25 +179,16 @@ async function checkVersions() {
         .setFooter({ text: `State: ${state.status}` })
         .setTimestamp();
 
-    // MULTI-SERVER LOOP
     for (const guildId of Object.keys(servers)) {
         const channelId = servers[guildId]?.channelId;
-
         if (!channelId) continue;
-
-        console.log(`[SEND] Guild ${guildId} → ${channelId}`);
 
         try {
             const channel = await client.channels.fetch(channelId).catch(() => null);
 
-            if (!channel || !channel.isTextBased()) {
-                console.log(`[WARN] Invalid channel: ${channelId}`);
-                continue;
-            }
+            if (!channel || !channel.isTextBased()) continue;
 
             await channel.send({ embeds: [embed] });
-
-            console.log(`[SUCCESS] Posted to guild ${guildId}`);
 
         } catch (err) {
             console.error(`[SEND ERROR] Guild ${guildId}:`, err.message);
@@ -202,7 +201,6 @@ async function checkVersions() {
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
-    // SETUP MULTI-SERVER
     if (message.content.startsWith("!setup")) {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply("You need Administrator permission.");
@@ -210,28 +208,16 @@ client.on("messageCreate", async (message) => {
 
         const channel = message.mentions.channels.first();
 
-        if (!channel) {
+        if (!channel || !channel.isTextBased()) {
             return message.reply("Usage: !setup #channel");
         }
 
-        if (!channel.isTextBased()) {
-            return message.reply("Please select a text channel.");
-        }
-
-        const guildId = message.guild.id;
-
-        servers[guildId] = {
-            channelId: channel.id
-        };
-
+        servers[message.guild.id] = { channelId: channel.id };
         saveServers();
-
-        console.log(`[SETUP] Guild ${guildId} → Channel ${channel.id}`);
 
         return message.reply(`Setup complete. Updates will go to ${channel}`);
     }
 
-    // MANUAL CHECK
     if (message.content === "!version") {
         const wipVersion = await getVersion(URLS.wip);
         const liveVersion = await getVersion(URLS.live);
@@ -253,14 +239,12 @@ client.on("messageCreate", async (message) => {
     }
 });
 
-// ---------------- v15 READY ----------------
+// ---------------- READY ----------------
 
 client.once("clientReady", (c) => {
     console.log(`Logged in as ${c.user.tag}`);
 
-    console.log("Running initial version check...");
     checkVersions();
-
     setInterval(checkVersions, 5 * 60 * 1000);
 });
 

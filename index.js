@@ -28,7 +28,12 @@ const CONFIG_FILE = "./servers.json";
 let servers = {};
 
 if (fs.existsSync(CONFIG_FILE)) {
-    servers = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+    try {
+        servers = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+    } catch (e) {
+        console.error("Failed to parse servers.json:", e.message);
+        servers = {};
+    }
 }
 
 function saveServers() {
@@ -47,19 +52,30 @@ let lastStatus = null;
 
 async function getVersion(url) {
     try {
-        const res = await axios.get(url);
-        return res.data.trim();
+        const res = await axios.get(url, {
+            timeout: 10000,
+            headers: {
+                "User-Agent": "Mozilla/5.0 (VersionTrackerBot)"
+            }
+        });
+
+        const data = String(res.data).trim();
+
+        if (!data) return null;
+
+        return data;
+
     } catch (err) {
-        console.error("Version fetch error:", err.message);
+        console.error("Version fetch error:", url, err.message);
         return null;
     }
 }
 
-// ---------------- VERSION COMPARISON (FIXED) ----------------
+// ---------------- VERSION COMPARISON ----------------
 
 function compareVersions(a, b) {
-    const pa = String(a).split(".").map(n => parseInt(n, 10));
-    const pb = String(b).split(".").map(n => parseInt(n, 10));
+    const pa = String(a).split(".").map(n => parseInt(n, 10) || 0);
+    const pb = String(b).split(".").map(n => parseInt(n, 10) || 0);
 
     const len = Math.max(pa.length, pb.length);
 
@@ -107,10 +123,17 @@ function analyzeStatus(wip, live) {
 
 async function checkVersions() {
 
+    console.log("[CHECK] Running version check...");
+
     const wipVersion = await getVersion(URLS.wip);
     const liveVersion = await getVersion(URLS.live);
 
-    if (!wipVersion || !liveVersion) return;
+    console.log("[DEBUG] WIP:", wipVersion, "| LIVE:", liveVersion);
+
+    if (!wipVersion || !liveVersion) {
+        console.log("[WARN] Missing version data, skipping cycle.");
+        return;
+    }
 
     const state = analyzeStatus(wipVersion, liveVersion);
 
@@ -120,6 +143,8 @@ async function checkVersions() {
 
     const statusChanged = lastStatus !== state.status;
 
+    console.log("[DEBUG] versionChanged:", versionChanged, "statusChanged:", statusChanged);
+
     if (!versionChanged && !statusChanged) return;
 
     lastVersions = { wip: wipVersion, live: liveVersion };
@@ -128,11 +153,17 @@ async function checkVersions() {
     for (const guildId in servers) {
 
         try {
+            const channelId = servers[guildId]?.channelId;
+            if (!channelId) continue;
 
-            const channelId = servers[guildId].channelId;
-            const channel = await client.channels.fetch(channelId);
+            console.log(`[POST] Guild ${guildId} -> Channel ${channelId}`);
 
-            if (!channel) continue;
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+
+            if (!channel) {
+                console.log("[WARN] Channel not found:", channelId);
+                continue;
+            }
 
             const embed = new EmbedBuilder()
                 .setColor("#111111")
@@ -153,9 +184,7 @@ async function checkVersions() {
                         value: state.message
                     }
                 )
-                .setFooter({
-                    text: `State: ${state.status}`
-                })
+                .setFooter({ text: `State: ${state.status}` })
                 .setTimestamp();
 
             await channel.send({ embeds: [embed] });
@@ -223,19 +252,19 @@ client.on("messageCreate", async (message) => {
                     value: state.message
                 }
             )
-            .setFooter({
-                text: `State: ${state.status}`
-            })
+            .setFooter({ text: `State: ${state.status}` })
             .setTimestamp();
 
         return message.reply({ embeds: [embed] });
     }
 });
 
-// ---------------- READY EVENT ----------------
+// ---------------- READY ----------------
 
 client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
+
+    console.log("Scheduler started (5 min interval)");
 
     checkVersions();
     setInterval(checkVersions, 5 * 60 * 1000);

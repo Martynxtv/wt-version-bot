@@ -27,13 +27,20 @@ const CONFIG_FILE = "./servers.json";
 
 let servers = {};
 
+console.log("Loading servers.json...");
+
 if (fs.existsSync(CONFIG_FILE)) {
     try {
-        servers = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+        const raw = fs.readFileSync(CONFIG_FILE, "utf8");
+        servers = JSON.parse(raw);
+
+        console.log("Servers loaded:", servers);
     } catch (err) {
-        console.error("Failed to load servers.json:", err.message);
+        console.error("servers.json error:", err.message);
         servers = {};
     }
+} else {
+    console.log("servers.json NOT FOUND");
 }
 
 function saveServers() {
@@ -55,7 +62,7 @@ async function getVersion(url) {
         const res = await axios.get(url, {
             timeout: 10000,
             headers: {
-                "User-Agent": "Mozilla/5.0 (VersionTrackerBot)"
+                "User-Agent": "Mozilla/5.0 (VersionBot-v15)"
             }
         });
 
@@ -66,7 +73,7 @@ async function getVersion(url) {
     }
 }
 
-// ---------------- VERSION COMPARISON ----------------
+// ---------------- VERSION LOGIC ----------------
 
 function compareVersions(a, b) {
     const pa = String(a).split(".").map(x => parseInt(x, 10) || 0);
@@ -84,8 +91,6 @@ function compareVersions(a, b) {
 
     return 0;
 }
-
-// ---------------- STATUS ANALYZER ----------------
 
 function analyzeStatus(wip, live) {
     const diff = compareVersions(wip, live);
@@ -113,7 +118,7 @@ function analyzeStatus(wip, live) {
     };
 }
 
-// ---------------- VERSION CHECKER ----------------
+// ---------------- CHECK LOOP ----------------
 
 async function checkVersions() {
     console.log("\n[CHECK] Running version check...");
@@ -121,7 +126,7 @@ async function checkVersions() {
     const wipVersion = await getVersion(URLS.wip);
     const liveVersion = await getVersion(URLS.live);
 
-    console.log("[API RESULT] WIP:", wipVersion, "| LIVE:", liveVersion);
+    console.log("[API] WIP:", wipVersion, "| LIVE:", liveVersion);
 
     if (!wipVersion || !liveVersion) {
         console.log("[SKIP] Missing API data");
@@ -147,7 +152,7 @@ async function checkVersions() {
         const channelId = servers[guildId]?.channelId;
         if (!channelId) continue;
 
-        console.log(`[SEND] Guild ${guildId} → Channel ${channelId}`);
+        console.log(`[SEND] Guild ${guildId} → ${channelId}`);
 
         try {
             const channel = await client.channels.fetch(channelId).catch(err => {
@@ -156,7 +161,7 @@ async function checkVersions() {
             });
 
             if (!channel || !channel.isTextBased()) {
-                console.log(`[WARN] Invalid channel: ${channelId}`);
+                console.log("[WARN] Invalid channel:", channelId);
                 continue;
             }
 
@@ -164,30 +169,19 @@ async function checkVersions() {
                 .setColor("#111111")
                 .setTitle("War Thunder Version Tracker")
                 .addFields(
-                    {
-                        name: "🟩 WIP (Dev Build)",
-                        value: `\`${wipVersion}\``,
-                        inline: true
-                    },
-                    {
-                        name: "🟦 Live (Stable)",
-                        value: `\`${liveVersion}\``,
-                        inline: true
-                    },
-                    {
-                        name: `${state.emoji} Status`,
-                        value: state.message
-                    }
+                    { name: "🟩 WIP", value: `\`${wipVersion}\``, inline: true },
+                    { name: "🟦 Live", value: `\`${liveVersion}\``, inline: true },
+                    { name: `${state.emoji} Status`, value: state.message }
                 )
                 .setFooter({ text: `State: ${state.status}` })
                 .setTimestamp();
 
             await channel.send({ embeds: [embed] });
 
-            console.log(`[SUCCESS] Posted to ${channelId}`);
+            console.log("[SUCCESS] Message sent");
 
         } catch (err) {
-            console.error(`[SEND ERROR] Guild ${guildId}:`, err.message);
+            console.error("[SEND ERROR]", err.message);
         }
     }
 }
@@ -218,7 +212,7 @@ client.on("messageCreate", async (message) => {
 
         saveServers();
 
-        return message.reply(`Setup complete. Updates will go to ${channel}`);
+        return message.reply(`Setup complete → ${channel}`);
     }
 
     if (message.content === "!version") {
@@ -242,10 +236,10 @@ client.on("messageCreate", async (message) => {
     }
 });
 
-// ---------------- READY ----------------
+// ---------------- V15 READY ----------------
 
-client.once("ready", () => {
-    console.log(`Logged in as ${client.user.tag}`);
+client.once("clientReady", (c) => {
+    console.log(`Logged in as ${c.user.tag}`);
 
     console.log("Running initial version check...");
     checkVersions();

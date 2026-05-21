@@ -30,8 +30,8 @@ let servers = {};
 if (fs.existsSync(CONFIG_FILE)) {
     try {
         servers = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
-    } catch (e) {
-        console.error("Failed to parse servers.json:", e.message);
+    } catch (err) {
+        console.error("Failed to load servers.json:", err.message);
         servers = {};
     }
 }
@@ -55,13 +55,13 @@ async function getVersion(url) {
         const res = await axios.get(url, {
             timeout: 10000,
             headers: {
-                "User-Agent": "Mozilla/5.0 (VersionBot)"
+                "User-Agent": "Mozilla/5.0 (VersionTrackerBot)"
             }
         });
 
         return String(res.data).trim();
     } catch (err) {
-        console.error("Version fetch error:", url, err.message);
+        console.error("API error:", url, err.message);
         return null;
     }
 }
@@ -85,7 +85,7 @@ function compareVersions(a, b) {
     return 0;
 }
 
-// ---------------- STATUS ----------------
+// ---------------- STATUS ANALYZER ----------------
 
 function analyzeStatus(wip, live) {
     const diff = compareVersions(wip, live);
@@ -116,15 +116,15 @@ function analyzeStatus(wip, live) {
 // ---------------- VERSION CHECKER ----------------
 
 async function checkVersions() {
-    console.log("[CHECK] Running version check...");
+    console.log("\n[CHECK] Running version check...");
 
     const wipVersion = await getVersion(URLS.wip);
     const liveVersion = await getVersion(URLS.live);
 
-    console.log("[API] WIP:", wipVersion, "LIVE:", liveVersion);
+    console.log("[API RESULT] WIP:", wipVersion, "| LIVE:", liveVersion);
 
     if (!wipVersion || !liveVersion) {
-        console.log("[SKIP] Missing version data");
+        console.log("[SKIP] Missing API data");
         return;
     }
 
@@ -144,14 +144,19 @@ async function checkVersions() {
     lastStatus = state.status;
 
     for (const guildId in servers) {
+        const channelId = servers[guildId]?.channelId;
+        if (!channelId) continue;
+
+        console.log(`[SEND] Guild ${guildId} → Channel ${channelId}`);
+
         try {
-            const channelId = servers[guildId]?.channelId;
-            if (!channelId) continue;
+            const channel = await client.channels.fetch(channelId).catch(err => {
+                console.error("[FETCH ERROR]", err.message);
+                return null;
+            });
 
-            const channel = await client.channels.fetch(channelId).catch(() => null);
-
-            if (!channel || channel.type !== ChannelType.GuildText) {
-                console.log(`[WARN] Invalid channel for guild ${guildId}`);
+            if (!channel || !channel.isTextBased()) {
+                console.log(`[WARN] Invalid channel: ${channelId}`);
                 continue;
             }
 
@@ -179,8 +184,10 @@ async function checkVersions() {
 
             await channel.send({ embeds: [embed] });
 
+            console.log(`[SUCCESS] Posted to ${channelId}`);
+
         } catch (err) {
-            console.error(`Guild ${guildId} error:`, err.message);
+            console.error(`[SEND ERROR] Guild ${guildId}:`, err.message);
         }
     }
 }

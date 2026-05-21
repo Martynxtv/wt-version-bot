@@ -13,6 +13,8 @@ const {
 
 console.log("Starting bot...");
 
+// ---------------- CLIENT ----------------
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -21,31 +23,41 @@ const client = new Client({
     ]
 });
 
-// ---------------- CONFIG ----------------
+// ---------------- CONFIG (FIXED) ----------------
 
 const CONFIG_FILE = "./servers.json";
 
 let servers = {};
 
-console.log("Loading servers.json...");
-
-if (fs.existsSync(CONFIG_FILE)) {
+// SAFE LOAD + AUTO CREATE FILE
+function loadServers() {
     try {
-        const raw = fs.readFileSync(CONFIG_FILE, "utf8");
-        servers = JSON.parse(raw);
+        if (!fs.existsSync(CONFIG_FILE)) {
+            console.log("[CONFIG] servers.json missing → creating new one");
+            fs.writeFileSync(CONFIG_FILE, JSON.stringify({}, null, 4));
+        }
 
-        console.log("Servers loaded:", servers);
+        const raw = fs.readFileSync(CONFIG_FILE, "utf8");
+        servers = raw ? JSON.parse(raw) : {};
+
+        console.log("[CONFIG] Loaded servers:", servers);
+
     } catch (err) {
-        console.error("servers.json error:", err.message);
+        console.error("[CONFIG ERROR]", err.message);
         servers = {};
     }
-} else {
-    console.log("servers.json NOT FOUND");
 }
 
 function saveServers() {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(servers, null, 4));
+    try {
+        fs.writeFileSync(CONFIG_FILE, JSON.stringify(servers, null, 4));
+        console.log("[CONFIG] Saved servers.json");
+    } catch (err) {
+        console.error("[CONFIG SAVE ERROR]", err.message);
+    }
 }
+
+loadServers();
 
 // ---------------- API ----------------
 
@@ -68,7 +80,7 @@ async function getVersion(url) {
 
         return String(res.data).trim();
     } catch (err) {
-        console.error("API error:", url, err.message);
+        console.error("[API ERROR]", url, err.message);
         return null;
     }
 }
@@ -152,11 +164,11 @@ async function checkVersions() {
         const channelId = servers[guildId]?.channelId;
         if (!channelId) continue;
 
-        console.log(`[SEND] Guild ${guildId} → ${channelId}`);
+        console.log(`[SEND] Guild ${guildId} → Channel ${channelId}`);
 
         try {
             const channel = await client.channels.fetch(channelId).catch(err => {
-                console.error("[FETCH ERROR]", err.message);
+                console.error("[CHANNEL FETCH ERROR]", err.message);
                 return null;
             });
 
@@ -178,7 +190,7 @@ async function checkVersions() {
 
             await channel.send({ embeds: [embed] });
 
-            console.log("[SUCCESS] Message sent");
+            console.log("[SUCCESS] Posted update");
 
         } catch (err) {
             console.error("[SEND ERROR]", err.message);
@@ -191,6 +203,7 @@ async function checkVersions() {
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
+    // SETUP COMMAND
     if (message.content.startsWith("!setup")) {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply("You need Administrator permission.");
@@ -215,6 +228,7 @@ client.on("messageCreate", async (message) => {
         return message.reply(`Setup complete → ${channel}`);
     }
 
+    // VERSION COMMAND
     if (message.content === "!version") {
         const wipVersion = await getVersion(URLS.wip);
         const liveVersion = await getVersion(URLS.live);

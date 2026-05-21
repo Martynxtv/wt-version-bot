@@ -1,6 +1,3 @@
-# Upgraded `index.js` with WIP/Test Server Detection
-
-```js
 require("dotenv").config();
 
 const fs = require("fs");
@@ -45,11 +42,7 @@ const URLS = {
     live: "https://yupmaster.gaijinent.com/yuitem/get_version.php?proj=warthunder"
 };
 
-let lastVersions = {
-    wip: null,
-    live: null
-};
-
+let lastVersions = { wip: null, live: null };
 let lastStatus = null;
 
 async function getVersion(url) {
@@ -62,10 +55,9 @@ async function getVersion(url) {
     }
 }
 
-// ---------------- STATUS ANALYZER ----------------
+// ---------------- STATUS ----------------
 
 function analyzeStatus(wip, live) {
-
     const w = parseInt(wip);
     const l = parseInt(live);
 
@@ -102,7 +94,7 @@ function analyzeStatus(wip, live) {
     };
 }
 
-// ---------------- VERSION CHECKER ----------------
+// ---------------- CHECKER ----------------
 
 async function checkVersions() {
 
@@ -119,21 +111,12 @@ async function checkVersions() {
 
     const statusChanged = lastStatus !== state.status;
 
-    if (!versionChanged && !statusChanged) {
-        return;
-    }
+    if (!versionChanged && !statusChanged) return;
 
-    console.log("NEW PATCH / STATUS CHANGE DETECTED");
-
-    lastVersions = {
-        wip: wipVersion,
-        live: liveVersion
-    };
-
+    lastVersions = { wip: wipVersion, live: liveVersion };
     lastStatus = state.status;
 
     for (const guildId in servers) {
-
         try {
 
             const channelId = servers[guildId].channelId;
@@ -144,7 +127,6 @@ async function checkVersions() {
             const embed = new EmbedBuilder()
                 .setColor("#111111")
                 .setTitle("War Thunder Version Tracker")
-
                 .addFields(
                     {
                         name: "🟩 WIP (Dev Build)",
@@ -161,11 +143,7 @@ async function checkVersions() {
                         value: state.message
                     }
                 )
-
-                .setFooter({
-                    text: `State: ${state.status}`
-                })
-
+                .setFooter({ text: `State: ${state.status}` })
                 .setTimestamp();
 
             await channel.send({ embeds: [embed] });
@@ -179,10 +157,8 @@ async function checkVersions() {
 // ---------------- COMMANDS ----------------
 
 client.on("messageCreate", async (message) => {
-
     if (message.author.bot) return;
 
-    // !setup
     if (message.content.startsWith("!setup")) {
 
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
@@ -191,9 +167,7 @@ client.on("messageCreate", async (message) => {
 
         const channel = message.mentions.channels.first();
 
-        if (!channel) {
-            return message.reply("Usage: !setup #channel");
-        }
+        if (!channel) return message.reply("Usage: !setup #channel");
 
         if (channel.type !== ChannelType.GuildText) {
             return message.reply("Please select a text channel.");
@@ -208,7 +182,6 @@ client.on("messageCreate", async (message) => {
         return message.reply(`Setup complete. Updates will go to ${channel}`);
     }
 
-    // !version
     if (message.content === "!version") {
 
         const wipVersion = await getVersion(URLS.wip);
@@ -219,7 +192,6 @@ client.on("messageCreate", async (message) => {
         const embed = new EmbedBuilder()
             .setColor("#111111")
             .setTitle("War Thunder Versions")
-
             .addFields(
                 {
                     name: "🟩 WIP (Dev Build)",
@@ -236,25 +208,19 @@ client.on("messageCreate", async (message) => {
                     value: state.message
                 }
             )
-
-            .setFooter({
-                text: `State: ${state.status}`
-            })
-
+            .setFooter({ text: `State: ${state.status}` })
             .setTimestamp();
 
         return message.reply({ embeds: [embed] });
     }
 });
 
-// ---------------- READY EVENT ----------------
+// ---------------- READY (FIXED) ----------------
 
-client.once("clientReady", () => {
-
+client.once("ready", () => {
     console.log(`Logged in as ${client.user.tag}`);
 
     checkVersions();
-
     setInterval(checkVersions, 5 * 60 * 1000);
 });
 
@@ -263,4 +229,3 @@ client.once("clientReady", () => {
 client.login(process.env.TOKEN)
     .then(() => console.log("Login successful"))
     .catch(err => console.error("Login failed:", err));
-```

@@ -1,3 +1,6 @@
+# Upgraded `index.js` with WIP/Test Server Detection
+
+```js
 require("dotenv").config();
 
 const fs = require("fs");
@@ -47,6 +50,8 @@ let lastVersions = {
     live: null
 };
 
+let lastStatus = null;
+
 async function getVersion(url) {
     try {
         const res = await axios.get(url);
@@ -57,21 +62,80 @@ async function getVersion(url) {
     }
 }
 
+// ---------------- STATUS ANALYZER ----------------
+
+function analyzeStatus(wip, live) {
+
+    const w = parseInt(wip);
+    const l = parseInt(live);
+
+    if (isNaN(w) || isNaN(l)) {
+        return {
+            status: "UNKNOWN",
+            emoji: "⚪",
+            message: "Unable to determine update state."
+        };
+    }
+
+    const diff = w - l;
+
+    if (diff <= 0) {
+        return {
+            status: "LIVE_SYNCED",
+            emoji: "🟢",
+            message: "Live version is synced with current build."
+        };
+    }
+
+    if (diff === 1) {
+        return {
+            status: "UPDATE_STAGING",
+            emoji: "🟡",
+            message: "New update staging detected."
+        };
+    }
+
+    return {
+        status: "TEST_SERVER_LIKELY",
+        emoji: "🔴",
+        message: "Test server / major update cycle likely active."
+    };
+}
+
+// ---------------- VERSION CHECKER ----------------
+
 async function checkVersions() {
+
     const wipVersion = await getVersion(URLS.wip);
     const liveVersion = await getVersion(URLS.live);
 
     if (!wipVersion || !liveVersion) return;
 
-    if (
-        lastVersions.wip === wipVersion &&
-        lastVersions.live === liveVersion
-    ) return;
+    const state = analyzeStatus(wipVersion, liveVersion);
 
-    lastVersions = { wip: wipVersion, live: liveVersion };
+    const versionChanged =
+        lastVersions.wip !== wipVersion ||
+        lastVersions.live !== liveVersion;
+
+    const statusChanged = lastStatus !== state.status;
+
+    if (!versionChanged && !statusChanged) {
+        return;
+    }
+
+    console.log("NEW PATCH / STATUS CHANGE DETECTED");
+
+    lastVersions = {
+        wip: wipVersion,
+        live: liveVersion
+    };
+
+    lastStatus = state.status;
 
     for (const guildId in servers) {
+
         try {
+
             const channelId = servers[guildId].channelId;
             const channel = await client.channels.fetch(channelId);
 
@@ -79,17 +143,29 @@ async function checkVersions() {
 
             const embed = new EmbedBuilder()
                 .setColor("#111111")
-                .setTitle("Version Watcher APP")
+                .setTitle("War Thunder Version Tracker")
+
                 .addFields(
                     {
-                        name: "🟩 WIP",
-                        value: `Current: \`${wipVersion}\``
+                        name: "🟩 WIP (Dev Build)",
+                        value: `\`${wipVersion}\``,
+                        inline: true
                     },
                     {
-                        name: "🟦 Live",
-                        value: `Current: \`${liveVersion}\``
+                        name: "🟦 Live (Stable)",
+                        value: `\`${liveVersion}\``,
+                        inline: true
+                    },
+                    {
+                        name: `${state.emoji} Status`,
+                        value: state.message
                     }
                 )
+
+                .setFooter({
+                    text: `State: ${state.status}`
+                })
+
                 .setTimestamp();
 
             await channel.send({ embeds: [embed] });
@@ -103,6 +179,7 @@ async function checkVersions() {
 // ---------------- COMMANDS ----------------
 
 client.on("messageCreate", async (message) => {
+
     if (message.author.bot) return;
 
     // !setup
@@ -137,34 +214,53 @@ client.on("messageCreate", async (message) => {
         const wipVersion = await getVersion(URLS.wip);
         const liveVersion = await getVersion(URLS.live);
 
+        const state = analyzeStatus(wipVersion, liveVersion);
+
         const embed = new EmbedBuilder()
             .setColor("#111111")
             .setTitle("War Thunder Versions")
+
             .addFields(
                 {
-                    name: "🟩 WIP",
-                    value: `\`${wipVersion}\``
+                    name: "🟩 WIP (Dev Build)",
+                    value: `\`${wipVersion}\``,
+                    inline: true
                 },
                 {
-                    name: "🟦 Live",
-                    value: `\`${liveVersion}\``
+                    name: "🟦 Live (Stable)",
+                    value: `\`${liveVersion}\``,
+                    inline: true
+                },
+                {
+                    name: `${state.emoji} Status`,
+                    value: state.message
                 }
-            );
+            )
+
+            .setFooter({
+                text: `State: ${state.status}`
+            })
+
+            .setTimestamp();
 
         return message.reply({ embeds: [embed] });
     }
 });
 
-// ---------------- READY EVENT (FIXED) ----------------
+// ---------------- READY EVENT ----------------
 
 client.once("clientReady", () => {
+
     console.log(`Logged in as ${client.user.tag}`);
 
     checkVersions();
+
     setInterval(checkVersions, 5 * 60 * 1000);
 });
+
 // ---------------- LOGIN ----------------
 
 client.login(process.env.TOKEN)
     .then(() => console.log("Login successful"))
     .catch(err => console.error("Login failed:", err));
+```
